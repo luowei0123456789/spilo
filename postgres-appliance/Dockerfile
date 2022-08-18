@@ -5,6 +5,7 @@ ARG DEMO=false
 ARG COMPRESS=false
 
 FROM ubuntu:18.04 as builder-false
+COPY packages/etcd-v3.3.27-linux-arm64.tar.gz /
 
 RUN export DEBIAN_FRONTEND=noninteractive \
     && echo 'APT::Install-Recommends "0";\nAPT::Install-Suggests "0";' > /etc/apt/apt.conf.d/01norecommend \
@@ -20,9 +21,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         # Required for wal-e
         apt-get install -y pv lzop \
         # install etcdctl
-        && ETCDVERSION=2.3.8 \
-        && curl -L https://github.com/coreos/etcd/releases/download/v${ETCDVERSION}/etcd-v${ETCDVERSION}-linux-amd64.tar.gz \
-                | tar xz -C /bin --strip=1 --wildcards --no-anchored etcdctl etcd; \
+        && ETCDVERSION=3.3.27 \
+        && tar xzf etcd-v${ETCDVERSION}-linux-arm64.tar.gz  -C /bin --strip=1 --wildcards --no-anchored etcdctl etcd; \
     fi \
 \
     # Cleanup all locales but en_US.UTF-8
@@ -76,6 +76,7 @@ ENV POSTGIS_VERSION=3.0 \
     PLPROFILER=REL4_1 \
     PAM_OAUTH2=v1.0 \
     PLANTUNER_COMMIT=7c276460e4a4052e454b9c44148346e7286eb280
+COPY github /builddeps/
 
 RUN export DEBIAN_FRONTEND=noninteractive \
     && set -ex \
@@ -96,7 +97,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         && apt-get install -y $BUILD_PACKAGES libprotobuf-c1 libcurl4 \
 \
         # install pam_oauth2.so
-        && git clone -b $PAM_OAUTH2 --recurse-submodules https://github.com/CyberDem0n/pam-oauth2.git \
+#        && git clone -b $PAM_OAUTH2 --recurse-submodules https://github.com/CyberDem0n/pam-oauth2.git \
         && make -C pam-oauth2 install \
 \
         # prepare 3rd sources
@@ -214,13 +215,15 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && if [ "$DEMO" != "true" ]; then \
         for version in $DEB_PG_SUPPORTED_VERSIONS; do \
             # due to dependency issues partman has to be installed separately
-            apt-get install -y postgresql-${version}-partman \
+            apt-get install -y postgresql-${version}-partman libsystemd-dev \
             # create postgis symlinks to make it possible to perform update
             && ln -s postgis-${POSTGIS_VERSION%.0}.so \
                 /usr/lib/postgresql/${version}/lib/postgis-2.5.so; \
         done \
         # patch, build and install pgbouncer
         && apt-get source pgbouncer \
+        && chmod -Rv 700 /var/cache/apt/archives/partial/ \
+        && chown -Rv _apt:root /var/cache/apt/archives/partial/ \
         && cd $(ls -d pgbouncer-*) \
         # Increase password size
         && sed -i 's/\(MAX_PASSWORD\t\).*/\11024/' include/bouncer.h \
@@ -235,12 +238,13 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         apt-get source postgresql-$PGVERSION-${pkg} \
         && cd $(ls -d *${pkg%?}*-*/) \
         && if [ "$pkg" = "pgextwlist" ]; then \
-            # make it possible to use it from shared_preload_libraries
-            perl -ne 'print unless /PG_TRY/ .. /PG_CATCH/' pgextwlist.c > pgextwlist.c.f \
-            && egrep -v '(PG_END_TRY|EmitWarningsOnPlaceholders)' pgextwlist.c.f > pgextwlist.c; \
+           sed -i '/postgresql-all/d' debian/control.in \
+           # make it possible to use it from shared_preload_libraries
+           && perl -ne 'print unless /PG_TRY/ .. /PG_CATCH/' pgextwlist.c > pgextwlist.c.f \
+           && egrep -v '(PG_END_TRY|EmitWarningsOnPlaceholders)' pgextwlist.c.f > pgextwlist.c; \
         fi \
         && pg_buildext updatecontrol \
-        && debuild -b -uc -us \
+        && DEB_BUILD_OPTIONS=nocheck debuild -b -uc -us \
         && cd .. \
         && for version in $DEB_PG_SUPPORTED_VERSIONS; do \
             for deb in postgresql-${version}-${pkg}_*.deb; do \
@@ -250,7 +254,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     done \
 \
     # Remove unnecessary packages
-    && apt-get purge -y ${BUILD_PACKAGES} postgresql postgresql-server-dev-* libpq-dev=$PGVERSION* libmagic1 bsdmainutils \
+    && apt-get purge -y ${BUILD_PACKAGES} postgresql postgresql-server-dev-* libpq-dev=* libmagic1 bsdmainutils \
     && apt-get autoremove -y \
     && apt-get clean \
     && dpkg -l | grep '^rc' | awk '{print $2}' | xargs apt-get purge -y \
@@ -267,16 +271,16 @@ RUN export DEBIAN_FRONTEND=noninteractive \
             done; \
         done \
 \
-        && PGVERSION=11 \
-        && cd /usr/share/postgresql/$PGVERSION/contrib/postgis-$POSTGIS_VERSION \
-        && for f in *.sql *.pl; do \
-            for v in /usr/share/postgresql/*; do \
-                if [ "$v" != "/usr/share/postgresql/$PGVERSION" ] && diff $v/contrib/postgis-$POSTGIS_VERSION/$f $f > /dev/null; then \
-                    rm $v/contrib/postgis-$POSTGIS_VERSION/$f \
-                    && ln -s ../../../$PGVERSION/contrib/postgis-$POSTGIS_VERSION/$f $v/contrib/postgis-$POSTGIS_VERSION/$f; \
-                fi; \
-            done; \
-        done \
+#        && PGVERSION=11 \
+#        && cd /usr/share/postgresql/$PGVERSION/contrib/postgis-$POSTGIS_VERSION \
+#        && for f in *.sql *.pl; do \
+#            for v in /usr/share/postgresql/*; do \
+#                if [ "$v" != "/usr/share/postgresql/$PGVERSION" ] && diff $v/contrib/postgis-$POSTGIS_VERSION/$f $f > /dev/null; then \
+#                    rm $v/contrib/postgis-$POSTGIS_VERSION/$f \
+#                    && ln -s ../../../$PGVERSION/contrib/postgis-$POSTGIS_VERSION/$f $v/contrib/postgis-$POSTGIS_VERSION/$f; \
+#                fi; \
+#            done; \
+#        done \
 \
         && if [ -d /usr/share/postgresql/9.5/contrib/postgis-$POSTGIS_VERSION ]; then \
             cd /usr/share/postgresql/9.5/contrib/postgis-$POSTGIS_VERSION \
@@ -380,6 +384,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 ENV PATRONIVERSION=1.6.5
 ENV WALE_VERSION=1.1.0
 ENV WALG_VERSION=v0.2.15
+COPY packages/wal-g.linux-arm64.tar.gz /
 RUN export DEBIAN_FRONTEND=noninteractive \
     && set -ex \
     && BUILD_PACKAGES="python3-pip python3-wheel python3-dev git patchutils binutils" \
@@ -395,8 +400,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 \
     && if [ "$DEMO" != "true" ]; then \
         EXTRAS=",etcd,consul,zookeeper,aws" \
-        && curl -sL https://github.com/wal-g/wal-g/releases/download/$WALG_VERSION/wal-g.linux-amd64.tar.gz \
-                | tar -C /usr/local/bin -xz \
+        && tar -xzf wal-g.linux-arm64.tar.gz -C /usr/local/bin  \
         && strip /usr/local/bin/wal-g \
         && apt-get install -y python3-etcd python3-consul python3-kazoo python3-meld3 \
                         python3-boto python3-gevent python3-greenlet python3-protobuf \
@@ -411,7 +415,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 \
         # pg_view installs useless pytest
         && sed -i '/^pytest/d' pg_view-*/requires.txt \
-        && pip3 uninstall -y attrs more_itertools pluggy pytest py \
+#        && pip3 uninstall -y attrs more_itertools pluggy pytest py \
 \
         # https://github.com/wal-e/wal-e/issues/318
         && sed -i 's/^\(    for i in range(0,\) num_retries):.*/\1 100):/g' /usr/lib/python3/dist-packages/boto/utils.py \
@@ -422,7 +426,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         # https://github.com/wal-e/wal-e/pull/392
         && curl -sL https://github.com/wal-e/wal-e/pull/392.diff | patch -p1; \
     fi \
-    && pip3 install "git+https://github.com/zalando/patroni.git@feature/no-kubernetes#egg=patroni[kubernetes$EXTRAS]" \
+    && pip3 install "git+https://github.com/killerwzb/patroni.git@feature/no-kubernetes#egg=patroni[kubernetes$EXTRAS]" \
 \
     && for d in /usr/local/lib/python3.6 /usr/lib/python3; do \
         cd $d/dist-packages \
