@@ -421,7 +421,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 \
         && find /usr/share/python-babel-localedata/locale-data -type f ! -name 'en_US*.dat' -delete \
 \
-        && pip3 install filechunkio wal-e[aws,google,swift]==$WALE_VERSION google-crc32c==1.1.2 \
+        && pip3 install filechunkio wal-e[aws,google,swift]==$WALE_VERSION google-crc32c==1.1.2 'protobuf<4.21.0' \
                 'git+https://github.com/zalando/pg_view.git@master#egg=pg-view' \
 \
         # Non-exclusive backups
